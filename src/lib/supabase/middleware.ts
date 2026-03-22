@@ -3,6 +3,15 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_ROUTES = ["/login", "/register"];
 
+/** Rotas acessíveis sem sessão (tablet na mesa + APIs do cardápio público). */
+function isAnonymousAllowed(request: NextRequest) {
+  const path = request.nextUrl.pathname;
+  if (path === "/mesa" || path.startsWith("/mesa/")) return true;
+  if (path === "/api/cardapio/menu/public") return true;
+  if (path === "/api/cardapio/orders" && request.method === "POST") return true;
+  return false;
+}
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -35,7 +44,7 @@ export async function updateSession(request: NextRequest) {
     request.nextUrl.pathname.startsWith(route)
   );
 
-  if (!user && !isPublicRoute) {
+  if (!user && !isPublicRoute && !isAnonymousAllowed(request)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

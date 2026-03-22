@@ -191,3 +191,39 @@ export interface Contact {
   notes: string | null;
   created_at: string;
 }
+
+// ── Cardápio / pedidos mesa ──
+
+export interface MenuItem {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  price: number;
+  image_url: string | null;
+  is_available: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type MenuOrderStatus = "novo" | "em_preparo" | "entregue" | "cancelado";
+
+export interface MenuOrderLine {
+  menu_item_id: string;
+  name: string;
+  unit_price: number;
+  quantity: number;
+  line_total: number;
+}
+
+export interface MenuOrder {
+  id: string;
+  table_label: string;
+  customer_note: string | null;
+  status: MenuOrderStatus;
+  items: MenuOrderLine[];
+  total: number;
+  created_at: string;
+  updated_at: string;
+}
