@@ -26,7 +26,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Modal } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/page-header";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -452,25 +451,6 @@ export default function CardapioPage() {
         </button>
       </div>
 
-      <Card className="border-dashed border-gold-400/30 bg-gold-400/5 p-4">
-        <p className="text-sm text-text-secondary">
-          <strong className="text-text-primary">Tablet na mesa:</strong> abra{" "}
-          <code className="rounded bg-surface-3 px-1.5 py-0.5 text-xs">
-            /mesa?mesa=12
-          </code>{" "}
-          (troque o número) ou peça ao cliente informar a mesa na tela. Os
-          pedidos aparecem aqui com notificação em tempo real.
-        </p>
-        <p className="mt-2 text-sm text-text-secondary">
-          O PDF oficial ({OFFICIAL_MENU_LABEL}) está em{" "}
-          <code className="rounded bg-surface-3 px-1.5 py-0.5 text-xs">
-            public/branding/cardapio-giggs-2026.pdf
-          </code>
-          . Cadastre os itens na aba <strong>Itens do cardápio</strong> para o
-          cliente pedir pelo app (o PDF não é lido automaticamente — é imagem).
-        </p>
-      </Card>
-
       {tab === "pedidos" ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-2">
@@ -591,31 +571,6 @@ export default function CardapioPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          <Card className="border-gold-400/25 bg-gradient-to-br from-gold-400/10 via-surface-2 to-surface-2 p-4">
-            <h3 className="text-sm font-semibold text-gold-400">
-              Gestão manual do cardápio
-            </h3>
-            <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-text-secondary">
-              <li>
-                <strong className="text-text-primary">Cadastrar:</strong> botão{" "}
-                <em>Novo item</em> — nome, categoria, preço, foto opcional.
-              </li>
-              <li>
-                <strong className="text-text-primary">Editar:</strong> ícone de
-                lápis na linha do item.
-              </li>
-              <li>
-                <strong className="text-text-primary">Ativar / desativar:</strong>{" "}
-                interruptor na coluna <em>No tablet</em> (desligado = cliente não
-                vê).
-              </li>
-              <li>
-                <strong className="text-text-primary">Remover:</strong> ícone da
-                lixeira (exclusão definitiva).
-              </li>
-            </ul>
-          </Card>
-
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-semibold text-text-primary">
               Itens exibidos no tablet

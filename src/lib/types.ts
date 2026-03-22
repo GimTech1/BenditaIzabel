@@ -136,6 +136,24 @@ export interface StockItem {
   updated_at: string;
 }
 
+export interface PurchaseListLine {
+  id: string;
+  /** Se preenchido, linha vinculada a item existente; se null, item novo (criado ao registrar compra). */
+  stock_item_id: string | null;
+  quantity: number;
+  note: string | null;
+  created_at: string;
+  /** Preenchidos quando `stock_item_id` é null (cadastro igual ao estoque). */
+  name?: string | null;
+  category?: string | null;
+  unit?: string | null;
+  min_qty?: number | null;
+  supplier_id?: string | null;
+  cost_per_unit?: number | null;
+  /** Relação PostgREST ao adicionar `stock_items (...)` no select */
+  stock_items?: Pick<StockItem, "id" | "name" | "unit" | "current_qty"> | null;
+}
+
 export type FinancePaymentMethod =
   | "dinheiro"
   | "pix"

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Package, Truck, Plus, Search, Pencil, Trash2, AlertTriangle,
-  Loader2, Phone, Mail, User, StickyNote,
+  Loader2, Phone, Mail, User, StickyNote, ShoppingCart, CheckCircle2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -16,7 +16,7 @@ import { Card } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/layout/page-header'
 import { cn } from '@/lib/utils'
-import type { StockItem, Supplier } from '@/lib/types'
+import type { StockItem, Supplier, PurchaseListLine } from '@/lib/types'
 
 type StockItemWithSupplier = StockItem & { suppliers: { name: string } | null }
 
@@ -44,7 +44,7 @@ function qtyStatus(current: number, min: number): 'danger' | 'warning' | 'succes
 // ─── Main ─────────────────────────────────────────────────────
 
 export default function EstoquePage() {
-  const [tab, setTab] = useState<'estoque' | 'fornecedores'>('estoque')
+  const [tab, setTab] = useState<'estoque' | 'fornecedores' | 'lista-compras'>('estoque')
   const [items, setItems] = useState<StockItemWithSupplier[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(true)
@@ -79,10 +79,10 @@ export default function EstoquePage() {
     <div>
       <PageHeader
         title="Estoque"
-        description="Controle de estoque e fornecedores"
+        description="Controle de estoque, lista de compras e fornecedores"
       />
 
-      <div className="flex gap-1 rounded-lg bg-surface-2 border border-border p-1 mb-6 w-fit">
+      <div className="flex flex-wrap gap-1 rounded-lg bg-surface-2 border border-border p-1 mb-6 w-fit max-w-full">
         <button
           onClick={() => { setTab('estoque'); setSearch('') }}
           className={cn(
@@ -93,6 +93,17 @@ export default function EstoquePage() {
           )}
         >
           <Package size={16} /> Estoque
+        </button>
+        <button
+          onClick={() => { setTab('lista-compras'); setSearch('') }}
+          className={cn(
+            'flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium transition-colors',
+            tab === 'lista-compras'
+              ? 'bg-gold-400 text-brand-900'
+              : 'text-text-secondary hover:text-text-primary hover:bg-surface-3'
+          )}
+        >
+          <ShoppingCart size={16} /> Lista de compras
         </button>
         <button
           onClick={() => { setTab('fornecedores'); setSearch('') }}
@@ -114,6 +125,12 @@ export default function EstoquePage() {
           suppliers={suppliers}
           search={search}
           setSearch={setSearch}
+        />
+      ) : tab === 'lista-compras' ? (
+        <ListaComprasTab
+          stockItems={items}
+          suppliers={suppliers}
+          onStockRefresh={loadData}
         />
       ) : (
         <FornecedoresTab
@@ -412,6 +429,635 @@ function EstoqueTab({ items, setItems, suppliers, search, setSearch }: EstoqueTa
         </div>
       </Modal>
     </>
+  )
+}
+
+// ─── Lista de compras Tab ───────────────────────────────────
+
+interface ListaComprasTabProps {
+  stockItems: StockItemWithSupplier[]
+  suppliers: Supplier[]
+  onStockRefresh: () => Promise<void>
+}
+
+function ListaComprasTab({ stockItems, suppliers, onStockRefresh }: ListaComprasTabProps) {
+  const [lines, setLines] = useState<PurchaseListLine[]>([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [finalizing, setFinalizing] = useState(false)
+  const [addMode, setAddMode] = useState<'estoque' | 'novo'>('estoque')
+  const [addItemId, setAddItemId] = useState('')
+  const [addQty, setAddQty] = useState('1')
+  const [addNote, setAddNote] = useState('')
+  const [novoForm, setNovoForm] = useState({
+    name: '',
+    category: CATEGORIES[0],
+    unit: UNITS[0],
+    min_qty: '0',
+    supplier_id: '',
+    cost_per_unit: '',
+    quantity: '1',
+    note: '',
+  })
+  const [editingDraft, setEditingDraft] = useState<PurchaseListLine | null>(null)
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [draftEditForm, setDraftEditForm] = useState({
+    name: '',
+    category: CATEGORIES[0],
+    unit: UNITS[0],
+    min_qty: '0',
+    supplier_id: '',
+    cost_per_unit: '',
+    quantity: '1',
+    note: '',
+  })
+
+  useEffect(() => {
+    if (!editingDraft) return
+    setDraftEditForm({
+      name: editingDraft.name ?? '',
+      category: editingDraft.category ?? CATEGORIES[0],
+      unit: editingDraft.unit ?? UNITS[0],
+      min_qty: String(editingDraft.min_qty ?? 0),
+      supplier_id: editingDraft.supplier_id ?? '',
+      cost_per_unit:
+        editingDraft.cost_per_unit != null
+          ? String(editingDraft.cost_per_unit)
+          : '',
+      quantity: String(editingDraft.quantity),
+      note: editingDraft.note ?? '',
+    })
+  }, [editingDraft])
+
+  const loadList = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await api<PurchaseListLine[]>('/api/estoque/lista-compras')
+      setLines(data)
+    } catch {
+      toast.error('Erro ao carregar lista de compras')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadList() }, [loadList])
+
+  async function addLine() {
+    setAdding(true)
+    try {
+      if (addMode === 'estoque') {
+        if (!addItemId) {
+          toast.error('Selecione um item do estoque')
+          return
+        }
+        const q = Number(addQty)
+        if (!Number.isFinite(q) || q <= 0) {
+          toast.error('Quantidade inválida')
+          return
+        }
+        await api('/api/estoque/lista-compras', {
+          method: 'POST',
+          body: JSON.stringify({
+            stock_item_id: addItemId,
+            quantity: q,
+            note: addNote.trim() || undefined,
+          }),
+        })
+        toast.success('Item adicionado à lista')
+        setAddQty('1')
+        setAddNote('')
+      } else {
+        if (!novoForm.name.trim()) {
+          toast.error('Nome do produto é obrigatório')
+          return
+        }
+        const q = Number(novoForm.quantity)
+        if (!Number.isFinite(q) || q <= 0) {
+          toast.error('Quantidade inválida')
+          return
+        }
+        const minQ = Number(novoForm.min_qty)
+        await api('/api/estoque/lista-compras', {
+          method: 'POST',
+          body: JSON.stringify({
+            quantity: q,
+            note: novoForm.note.trim() || undefined,
+            name: novoForm.name.trim(),
+            category: novoForm.category,
+            unit: novoForm.unit,
+            min_qty: Number.isFinite(minQ) && minQ >= 0 ? minQ : 0,
+            supplier_id: novoForm.supplier_id || null,
+            cost_per_unit: novoForm.cost_per_unit
+              ? Number(novoForm.cost_per_unit)
+              : null,
+          }),
+        })
+        toast.success('Produto novo adicionado à lista')
+        setNovoForm({
+          name: '',
+          category: CATEGORIES[0],
+          unit: UNITS[0],
+          min_qty: '0',
+          supplier_id: '',
+          cost_per_unit: '',
+          quantity: '1',
+          note: '',
+        })
+      }
+      await loadList()
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao adicionar')
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function updateLineQty(id: string, quantity: number) {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      toast.error('Quantidade deve ser maior que zero')
+      return
+    }
+    try {
+      const updated = await api<PurchaseListLine>(`/api/estoque/lista-compras/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ quantity }),
+      })
+      setLines(prev => prev.map(l => (l.id === id ? updated : l)))
+      toast.success('Quantidade atualizada')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao atualizar')
+    }
+  }
+
+  async function removeLine(id: string) {
+    if (!confirm('Remover este item da lista?')) return
+    try {
+      await api(`/api/estoque/lista-compras/${id}`, { method: 'DELETE' })
+      setLines(prev => prev.filter(l => l.id !== id))
+      toast.success('Removido da lista')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao remover')
+    }
+  }
+
+  async function saveDraftEdit() {
+    if (!editingDraft) return
+    if (!draftEditForm.name.trim()) {
+      toast.error('Nome é obrigatório')
+      return
+    }
+    const q = Number(draftEditForm.quantity)
+    if (!Number.isFinite(q) || q <= 0) {
+      toast.error('Quantidade inválida')
+      return
+    }
+    const minQ = Number(draftEditForm.min_qty)
+    setSavingDraft(true)
+    try {
+      const updated = await api<PurchaseListLine>(
+        `/api/estoque/lista-compras/${editingDraft.id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: draftEditForm.name.trim(),
+            category: draftEditForm.category,
+            unit: draftEditForm.unit,
+            min_qty: Number.isFinite(minQ) && minQ >= 0 ? minQ : 0,
+            supplier_id: draftEditForm.supplier_id || null,
+            cost_per_unit: draftEditForm.cost_per_unit
+              ? Number(draftEditForm.cost_per_unit)
+              : null,
+            quantity: q,
+            note: draftEditForm.note.trim() || null,
+          }),
+        }
+      )
+      setLines(prev => prev.map(l => (l.id === updated.id ? updated : l)))
+      setEditingDraft(null)
+      toast.success('Produto novo atualizado na lista')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao salvar')
+    } finally {
+      setSavingDraft(false)
+    }
+  }
+
+  async function finalizePurchase() {
+    if (lines.length === 0) {
+      toast.error('A lista está vazia')
+      return
+    }
+    if (!confirm(
+      'Registrar compra? Itens já cadastrados terão a quantidade somada ao estoque; produtos novos serão criados no estoque com a quantidade comprada. A lista será esvaziada.'
+    )) return
+    setFinalizing(true)
+    try {
+      await api('/api/estoque/lista-compras/finalizar', { method: 'POST' })
+      toast.success('Compra registrada — estoque atualizado')
+      setLines([])
+      await onStockRefresh()
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao finalizar')
+    } finally {
+      setFinalizing(false)
+    }
+  }
+
+  const sortedStock = [...stockItems].sort((a, b) => a.name.localeCompare(b.name))
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-8 w-8 animate-spin text-gold-400" />
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+        <Card className="flex items-center gap-3 p-4">
+          <div className="rounded-lg bg-gold-400/15 p-2.5">
+            <ShoppingCart size={20} className="text-gold-400" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-text-primary">{lines.length}</p>
+            <p className="text-xs text-text-muted">Itens na lista de compras</p>
+          </div>
+        </Card>
+      </div>
+
+      <Card className="p-4 mb-6 border border-border">
+        <p className="text-sm font-medium text-text-primary mb-3">Adicionar à lista</p>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => setAddMode('estoque')}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+              addMode === 'estoque'
+                ? 'bg-gold-400 text-brand-900'
+                : 'bg-surface-3 text-text-secondary hover:text-text-primary'
+            )}
+          >
+            Já cadastrado no estoque
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddMode('novo')}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+              addMode === 'novo'
+                ? 'bg-gold-400 text-brand-900'
+                : 'bg-surface-3 text-text-secondary hover:text-text-primary'
+            )}
+          >
+            Produto novo (entra no estoque ao comprar)
+          </button>
+        </div>
+
+        {addMode === 'estoque' ? (
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-end flex-wrap">
+            <div className="flex-1 min-w-[200px]">
+              <Select
+                label="Item do estoque"
+                id="lista-item"
+                value={addItemId}
+                onChange={e => setAddItemId(e.target.value)}
+                options={[
+                  { value: '', label: 'Selecione…' },
+                  ...sortedStock.map(s => ({
+                    value: s.id,
+                    label: `${s.name} (${s.current_qty} ${s.unit})`,
+                  })),
+                ]}
+              />
+            </div>
+            <Input
+              label="Quantidade a comprar"
+              id="lista-qty"
+              type="number"
+              min="0.01"
+              step="0.01"
+              className="w-full sm:w-36"
+              value={addQty}
+              onChange={e => setAddQty(e.target.value)}
+            />
+            <Input
+              label="Obs. (opcional)"
+              id="lista-note"
+              className="flex-1 min-w-[160px]"
+              value={addNote}
+              onChange={e => setAddNote(e.target.value)}
+              placeholder="Ex: promoção, marca…"
+            />
+            <Button size="sm" loading={adding} onClick={addLine} className="shrink-0">
+              <Plus size={16} /> Adicionar
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-xs text-text-muted">
+              Preencha como no cadastro de estoque. Ao registrar a compra, o item será criado automaticamente com a quantidade comprada.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                label="Nome"
+                id="lista-novo-nome"
+                value={novoForm.name}
+                onChange={e => setNovoForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="Ex: Coca-Cola 2L"
+              />
+              <Input
+                label="Quantidade a comprar"
+                id="lista-novo-qty"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={novoForm.quantity}
+                onChange={e => setNovoForm(f => ({ ...f, quantity: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Select
+                label="Categoria"
+                id="lista-novo-cat"
+                value={novoForm.category}
+                onChange={e => setNovoForm(f => ({ ...f, category: e.target.value }))}
+                options={CATEGORIES.map(c => ({ value: c, label: c }))}
+              />
+              <Select
+                label="Unidade"
+                id="lista-novo-unit"
+                value={novoForm.unit}
+                onChange={e => setNovoForm(f => ({ ...f, unit: e.target.value }))}
+                options={UNITS.map(u => ({ value: u, label: u }))}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                label="Qtd. mínima (estoque após criar)"
+                id="lista-novo-min"
+                type="number"
+                min="0"
+                step="0.01"
+                value={novoForm.min_qty}
+                onChange={e => setNovoForm(f => ({ ...f, min_qty: e.target.value }))}
+              />
+              <Input
+                label="Custo unitário (R$)"
+                id="lista-novo-custo"
+                type="number"
+                min="0"
+                step="0.01"
+                value={novoForm.cost_per_unit}
+                onChange={e => setNovoForm(f => ({ ...f, cost_per_unit: e.target.value }))}
+              />
+            </div>
+            <Select
+              label="Fornecedor"
+              id="lista-novo-forn"
+              value={novoForm.supplier_id}
+              onChange={e => setNovoForm(f => ({ ...f, supplier_id: e.target.value }))}
+              options={[
+                { value: '', label: 'Nenhum' },
+                ...suppliers.map(s => ({ value: s.id, label: s.name })),
+              ]}
+            />
+            <Input
+              label="Obs. (opcional)"
+              id="lista-novo-note"
+              value={novoForm.note}
+              onChange={e => setNovoForm(f => ({ ...f, note: e.target.value }))}
+              placeholder="Marca, embalagem…"
+            />
+            <div className="flex justify-end">
+              <Button size="sm" loading={adding} onClick={addLine}>
+                <Plus size={16} /> Adicionar à lista
+              </Button>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <p className="text-sm text-text-secondary">
+          Inclua itens já cadastrados ou produtos novos (mesmos dados do estoque). Registrar compra atualiza ou cria itens — apenas admin/gerente.
+        </p>
+        <Button
+          size="sm"
+          variant="primary"
+          loading={finalizing}
+          disabled={lines.length === 0}
+          onClick={finalizePurchase}
+          className="shrink-0 bg-green-600 hover:bg-green-700 text-white border-0"
+        >
+          <CheckCircle2 size={16} /> Registrar compra
+        </Button>
+      </div>
+
+      {lines.length === 0 ? (
+        <EmptyState
+          icon={ShoppingCart}
+          title="Lista vazia"
+          description="Adicione itens do estoque ou cadastre produtos novos para comprar."
+        />
+      ) : (
+        <div className="rounded-xl border border-border bg-surface-2 overflow-hidden">
+          <div className="hidden md:grid grid-cols-[1fr_100px_120px_120px_1fr_120px] gap-3 px-4 py-2.5 border-b border-border text-xs font-medium text-text-muted">
+            <span>Item</span>
+            <span>Tipo</span>
+            <span>Estoque atual</span>
+            <span>Qtd. compra</span>
+            <span>Obs.</span>
+            <span className="text-right">Ações</span>
+          </div>
+          {lines.map(line => {
+            const isDraft = line.stock_item_id == null
+            const si = line.stock_items
+            const name = isDraft ? (line.name ?? '—') : (si?.name ?? '—')
+            const unit = isDraft ? (line.unit ?? '') : (si?.unit ?? '')
+            const current = isDraft ? null : (si?.current_qty ?? 0)
+            return (
+              <ListaCompraRow
+                key={line.id}
+                line={line}
+                isDraft={isDraft}
+                displayName={name}
+                unit={unit}
+                currentQty={current}
+                onSaveQty={(q) => updateLineQty(line.id, q)}
+                onRemove={() => removeLine(line.id)}
+                onEditDraft={isDraft ? () => setEditingDraft(line) : undefined}
+              />
+            )
+          })}
+        </div>
+      )}
+
+      <Modal
+        open={!!editingDraft}
+        onClose={() => setEditingDraft(null)}
+        title="Editar produto novo na lista"
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-text-muted">
+            Mesmos campos do cadastro de estoque. Ao registrar a compra, o item será criado assim.
+          </p>
+          <Input
+            label="Nome"
+            id="draft-name"
+            value={draftEditForm.name}
+            onChange={e => setDraftEditForm(f => ({ ...f, name: e.target.value }))}
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <Select
+              label="Categoria"
+              id="draft-cat"
+              value={draftEditForm.category}
+              onChange={e => setDraftEditForm(f => ({ ...f, category: e.target.value }))}
+              options={CATEGORIES.map(c => ({ value: c, label: c }))}
+            />
+            <Select
+              label="Unidade"
+              id="draft-unit"
+              value={draftEditForm.unit}
+              onChange={e => setDraftEditForm(f => ({ ...f, unit: e.target.value }))}
+              options={UNITS.map(u => ({ value: u, label: u }))}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Qtd. a comprar"
+              id="draft-qty"
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={draftEditForm.quantity}
+              onChange={e => setDraftEditForm(f => ({ ...f, quantity: e.target.value }))}
+            />
+            <Input
+              label="Qtd. mínima (no estoque)"
+              id="draft-min"
+              type="number"
+              min="0"
+              step="0.01"
+              value={draftEditForm.min_qty}
+              onChange={e => setDraftEditForm(f => ({ ...f, min_qty: e.target.value }))}
+            />
+          </div>
+          <Input
+            label="Custo unitário (R$)"
+            id="draft-cost"
+            type="number"
+            min="0"
+            step="0.01"
+            value={draftEditForm.cost_per_unit}
+            onChange={e => setDraftEditForm(f => ({ ...f, cost_per_unit: e.target.value }))}
+          />
+          <Select
+            label="Fornecedor"
+            id="draft-sup"
+            value={draftEditForm.supplier_id}
+            onChange={e => setDraftEditForm(f => ({ ...f, supplier_id: e.target.value }))}
+            options={[
+              { value: '', label: 'Nenhum' },
+              ...suppliers.map(s => ({ value: s.id, label: s.name })),
+            ]}
+          />
+          <Input
+            label="Obs. (opcional)"
+            id="draft-note"
+            value={draftEditForm.note}
+            onChange={e => setDraftEditForm(f => ({ ...f, note: e.target.value }))}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" size="sm" onClick={() => setEditingDraft(null)}>
+              Cancelar
+            </Button>
+            <Button size="sm" loading={savingDraft} onClick={saveDraftEdit}>
+              Salvar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  )
+}
+
+interface ListaCompraRowProps {
+  line: PurchaseListLine
+  isDraft: boolean
+  displayName: string
+  unit: string
+  currentQty: number | null
+  onSaveQty: (q: number) => void
+  onRemove: () => void
+  onEditDraft?: () => void
+}
+
+function ListaCompraRow({
+  line,
+  isDraft,
+  displayName,
+  unit,
+  currentQty,
+  onSaveQty,
+  onRemove,
+  onEditDraft,
+}: ListaCompraRowProps) {
+  const [qtyStr, setQtyStr] = useState(String(line.quantity))
+  useEffect(() => {
+    setQtyStr(String(line.quantity))
+  }, [line.quantity])
+
+  const stockLabel =
+    currentQty === null
+      ? '—'
+      : `${currentQty} ${unit}`.trim()
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-[1fr_100px_120px_120px_1fr_120px] gap-2 md:gap-3 px-4 py-3 border-b border-border last:border-b-0 hover:bg-surface-3/50 items-start md:items-center">
+      <span className="text-sm font-medium text-text-primary break-words min-w-0">{displayName}</span>
+      <div className="flex items-center">
+        {isDraft ? (
+          <Badge variant="info">Novo</Badge>
+        ) : (
+          <Badge>Estoque</Badge>
+        )}
+      </div>
+      <span className="text-sm text-text-muted">{stockLabel}</span>
+      <div className="flex flex-wrap items-center gap-1">
+        <input
+          type="number"
+          min="0.01"
+          step="0.01"
+          value={qtyStr}
+          onChange={e => setQtyStr(e.target.value)}
+          className="h-9 w-24 rounded-lg border border-border bg-surface-1 px-2 text-sm text-text-primary"
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 text-xs"
+          onClick={() => onSaveQty(Number(qtyStr))}
+        >
+          OK
+        </Button>
+      </div>
+      <span className="text-xs text-text-secondary break-words">{line.note || '—'}</span>
+      <div className="flex justify-end gap-1">
+        {onEditDraft && (
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEditDraft} title="Editar cadastro">
+            <Pencil size={14} />
+          </Button>
+        )}
+        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300" onClick={onRemove}>
+          <Trash2 size={14} />
+        </Button>
+      </div>
+    </div>
   )
 }
 

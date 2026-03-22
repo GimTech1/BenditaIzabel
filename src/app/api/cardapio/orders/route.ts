@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAnonOnlyClient } from "@/lib/supabase/anon-only";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { NextRequest, NextResponse } from "next/server";
 import type { MenuOrderLine } from "@/lib/types";
 
@@ -127,21 +128,31 @@ export async function POST(request: Request) {
         ? customer_note.trim().slice(0, 500) || null
         : null;
 
-    const { data: order, error: insErr } = await supabase
-      .from("menu_orders")
-      .insert({
-        table_label,
-        customer_note: note,
-        status: "novo",
-        items: snapshot,
-        total,
-      })
-      .select()
-      .single();
+    const row = {
+      table_label,
+      customer_note: note,
+      status: "novo" as const,
+      items: snapshot,
+      total,
+    };
 
+    const service = createServiceRoleClient();
+    if (service) {
+      const { data: order, error: insErr } = await service
+        .from("menu_orders")
+        .insert(row)
+        .select()
+        .single();
+      if (insErr)
+        return NextResponse.json({ error: insErr.message }, { status: 400 });
+      return NextResponse.json(order, { status: 201 });
+    }
+
+    // Sem service role: INSERT como anon — não usar .select() (exigiria política SELECT para anon)
+    const { error: insErr } = await supabase.from("menu_orders").insert(row);
     if (insErr)
       return NextResponse.json({ error: insErr.message }, { status: 400 });
-    return NextResponse.json(order, { status: 201 });
+    return NextResponse.json({ ok: true }, { status: 201 });
   } catch {
     return NextResponse.json(
       { error: "Internal server error" },
