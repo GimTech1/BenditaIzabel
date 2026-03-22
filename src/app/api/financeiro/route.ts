@@ -100,6 +100,7 @@ export async function POST(request: Request) {
       supplier_id,
       notes,
       reference_code,
+      invoice_file_url,
     } = body;
 
     const row: Record<string, unknown> = {
@@ -116,6 +117,7 @@ export async function POST(request: Request) {
     if (supplier_id !== undefined) row.supplier_id = supplier_id || null;
     if (notes !== undefined) row.notes = notes || null;
     if (reference_code !== undefined) row.reference_code = reference_code || null;
+    if (invoice_file_url !== undefined) row.invoice_file_url = invoice_file_url || null;
 
     const { data, error } = await supabase
       .from("finance_entries")

@@ -35,6 +35,7 @@ export async function PATCH(
       supplier_id,
       notes,
       reference_code,
+      invoice_file_url,
     } = body;
 
     const update: Record<string, unknown> = {};
@@ -48,6 +49,7 @@ export async function PATCH(
     if (supplier_id !== undefined) update.supplier_id = supplier_id || null;
     if (notes !== undefined) update.notes = notes || null;
     if (reference_code !== undefined) update.reference_code = reference_code || null;
+    if (invoice_file_url !== undefined) update.invoice_file_url = invoice_file_url || null;
 
     const { data, error } = await supabase
       .from("finance_entries")

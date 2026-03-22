@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Plus, DollarSign, TrendingUp, TrendingDown, Wallet,
   Edit3, Trash2, Loader2, Download, Clock, Search, X,
-  PieChart,
+  PieChart, FileText, Upload, ExternalLink,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -18,6 +18,7 @@ import { Select } from '@/components/ui/select'
 import { Card } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/layout/page-header'
+import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import type {
   FinanceEntry,
@@ -52,6 +53,9 @@ const STATUS_OPTIONS: { value: FinanceEntryStatus; label: string }[] = [
   { value: 'cancelled', label: 'Cancelado' },
 ]
 
+const NF_BUCKET = 'bendita-finance-nf'
+const MAX_NF_BYTES = 15 * 1024 * 1024
+
 const formatBRL = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
 
@@ -70,7 +74,12 @@ function normalizeEntry(raw: Record<string, unknown>): FinanceEntry {
     supplier_id: (raw.supplier_id as string) ?? null,
     notes: (raw.notes as string) ?? null,
     reference_code: (raw.reference_code as string) ?? null,
+    invoice_file_url: (raw.invoice_file_url as string) ?? null,
   }
+}
+
+function sanitizeInvoiceFileName(name: string) {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'nota'
 }
 
 async function api<T>(url: string, opts?: RequestInit): Promise<T> {
@@ -113,7 +122,7 @@ function statusVariant(s: FinanceEntryStatus): 'success' | 'warning' | 'danger' 
 function exportCsv(rows: FinanceEntry[], month: string) {
   const headers = [
     'Data', 'Tipo', 'Categoria', 'Descrição', 'Valor', 'Pagamento', 'Status',
-    'Ref.', 'Notas',
+    'Ref.', 'Notas', 'URL NF',
   ]
   const lines = rows.map(e => [
     e.date,
@@ -125,6 +134,7 @@ function exportCsv(rows: FinanceEntry[], month: string) {
     statusLabel(e.status),
     e.reference_code ?? '',
     `"${(e.notes || '').replace(/"/g, '""')}"`,
+    e.invoice_file_url ?? '',
   ].join(';'))
   const bom = '\uFEFF'
   const blob = new Blob([bom + headers.join(';') + '\n' + lines.join('\n')], {
@@ -163,6 +173,9 @@ export default function FinanceiroPage() {
   const [formSupplierId, setFormSupplierId] = useState('')
   const [formNotes, setFormNotes] = useState('')
   const [formRef, setFormRef] = useState('')
+  const [pendingInvoiceFile, setPendingInvoiceFile] = useState<File | null>(null)
+  const [removeInvoice, setRemoveInvoice] = useState(false)
+  const invoiceInputRef = useRef<HTMLInputElement>(null)
 
   const loadSuppliers = useCallback(async () => {
     try {
@@ -255,6 +268,9 @@ export default function FinanceiroPage() {
     setFormSupplierId('')
     setFormNotes('')
     setFormRef('')
+    setPendingInvoiceFile(null)
+    setRemoveInvoice(false)
+    if (invoiceInputRef.current) invoiceInputRef.current.value = ''
     setShowModal(true)
   }
 
@@ -270,6 +286,9 @@ export default function FinanceiroPage() {
     setFormSupplierId(entry.supplier_id ?? '')
     setFormNotes(entry.notes ?? '')
     setFormRef(entry.reference_code ?? '')
+    setPendingInvoiceFile(null)
+    setRemoveInvoice(false)
+    if (invoiceInputRef.current) invoiceInputRef.current.value = ''
     setShowModal(true)
   }
 
@@ -281,6 +300,57 @@ export default function FinanceiroPage() {
     }
     setSaving(true)
     try {
+      let invoice_file_url: string | null =
+        editing && !removeInvoice && !pendingInvoiceFile
+          ? (editing.invoice_file_url ?? null)
+          : null
+
+      if (removeInvoice) {
+        invoice_file_url = null
+      } else if (pendingInvoiceFile) {
+        const allowed =
+          pendingInvoiceFile.type === 'application/pdf' ||
+          pendingInvoiceFile.type === 'application/xml' ||
+          pendingInvoiceFile.type === 'text/xml' ||
+          /\.pdf$/i.test(pendingInvoiceFile.name) ||
+          /\.xml$/i.test(pendingInvoiceFile.name)
+        if (!allowed) {
+          toast.error('Use PDF ou XML da nota fiscal (NF-e / NFC-e)')
+          setSaving(false)
+          return
+        }
+        if (pendingInvoiceFile.size > MAX_NF_BYTES) {
+          toast.error('Arquivo muito grande (máx. 15 MB)')
+          setSaving(false)
+          return
+        }
+        const supabase = createClient()
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        if (!user) {
+          toast.error('Sessão expirada. Faça login de novo.')
+          setSaving(false)
+          return
+        }
+        const safe = sanitizeInvoiceFileName(pendingInvoiceFile.name)
+        const path = `nf/${user.id}/${Date.now()}_${safe}`
+        const { error: upErr } = await supabase.storage
+          .from(NF_BUCKET)
+          .upload(path, pendingInvoiceFile, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: pendingInvoiceFile.type || undefined,
+          })
+        if (upErr) {
+          toast.error(upErr.message || 'Erro ao enviar a nota fiscal')
+          setSaving(false)
+          return
+        }
+        const { data: pub } = supabase.storage.from(NF_BUCKET).getPublicUrl(path)
+        invoice_file_url = pub.publicUrl
+      }
+
       const payload = {
         date: formDate,
         type: formType,
@@ -292,6 +362,7 @@ export default function FinanceiroPage() {
         supplier_id: formType === 'expense' && formSupplierId ? formSupplierId : null,
         notes: formNotes.trim() || null,
         reference_code: formRef.trim() || null,
+        invoice_file_url,
       }
       if (editing) {
         await api(`/api/financeiro/${editing.id}`, {
@@ -307,6 +378,9 @@ export default function FinanceiroPage() {
         toast.success('Lançamento criado')
       }
       setShowModal(false)
+      setPendingInvoiceFile(null)
+      setRemoveInvoice(false)
+      if (invoiceInputRef.current) invoiceInputRef.current.value = ''
       fetchEntries()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Erro ao salvar')
@@ -559,13 +633,14 @@ export default function FinanceiroPage() {
         />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className="w-full min-w-[960px] text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-2 text-left text-text-secondary">
                 <th className="px-3 py-3 font-medium">Data</th>
                 <th className="px-3 py-3 font-medium">Tipo</th>
                 <th className="px-3 py-3 font-medium">Categoria</th>
                 <th className="px-3 py-3 font-medium">Descrição</th>
+                <th className="px-2 py-3 font-medium w-14 text-center" title="Nota fiscal">NF</th>
                 <th className="px-3 py-3 font-medium">Ref.</th>
                 <th className="px-3 py-3 font-medium">Pagamento</th>
                 <th className="px-3 py-3 font-medium">Status</th>
@@ -599,6 +674,21 @@ export default function FinanceiroPage() {
                       <span className="mt-0.5 block text-[10px] text-text-muted">
                         Forn.: {supplierName(entry.supplier_id)}
                       </span>
+                    )}
+                  </td>
+                  <td className="px-2 py-2.5 text-center">
+                    {entry.invoice_file_url ? (
+                      <a
+                        href={entry.invoice_file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex rounded-lg p-1.5 text-gold-400 hover:bg-surface-3"
+                        title="Abrir nota fiscal"
+                      >
+                        <FileText size={16} />
+                      </a>
+                    ) : (
+                      <span className="text-text-muted">—</span>
                     )}
                   </td>
                   <td className="max-w-[80px] truncate px-3 py-2.5 text-xs text-text-muted">
@@ -711,11 +801,87 @@ export default function FinanceiroPage() {
           )}
           <Input
             id="fin-ref"
-            label="Referência (NF, recibo, código)"
+            label="Referência (nº NF, recibo, código)"
             value={formRef}
             onChange={e => setFormRef(e.target.value)}
             placeholder="Opcional"
           />
+
+          <div className="space-y-2 rounded-lg border border-border bg-surface-3/50 p-3">
+            <label className="text-sm font-medium text-text-secondary">
+              Importar nota fiscal (PDF ou XML)
+            </label>
+            <input
+              ref={invoiceInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.xml,application/pdf,application/xml,text/xml"
+              onChange={e => {
+                const f = e.target.files?.[0]
+                setPendingInvoiceFile(f ?? null)
+                if (f) setRemoveInvoice(false)
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => invoiceInputRef.current?.click()}
+              >
+                <Upload size={14} className="mr-1.5" />
+                {pendingInvoiceFile ? 'Trocar arquivo' : 'Anexar NF-e / PDF'}
+              </Button>
+              {pendingInvoiceFile && (
+                <span className="max-w-[200px] truncate text-xs text-text-muted" title={pendingInvoiceFile.name}>
+                  {pendingInvoiceFile.name}
+                </span>
+              )}
+              {pendingInvoiceFile && (
+                <button
+                  type="button"
+                  className="text-xs text-red-400 hover:underline"
+                  onClick={() => {
+                    setPendingInvoiceFile(null)
+                    if (invoiceInputRef.current) invoiceInputRef.current.value = ''
+                  }}
+                >
+                  Remover seleção
+                </button>
+              )}
+            </div>
+            {editing?.invoice_file_url && !pendingInvoiceFile && !removeInvoice && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">
+                <a
+                  href={editing.invoice_file_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-gold-400 hover:text-gold-300"
+                >
+                  <ExternalLink size={12} /> Ver nota atual
+                </a>
+                <button
+                  type="button"
+                  className="text-xs text-red-400 hover:underline"
+                  onClick={() => setRemoveInvoice(true)}
+                >
+                  Remover nota anexada
+                </button>
+              </div>
+            )}
+            {removeInvoice && (
+              <p className="text-xs text-amber-400">
+                A nota será removida ao salvar.{' '}
+                <button type="button" className="underline" onClick={() => setRemoveInvoice(false)}>
+                  Desfazer
+                </button>
+              </p>
+            )}
+            <p className="text-[11px] text-text-muted">
+              Aceita DANFE em PDF ou XML da NF-e. Máx. 15 MB. Requer bucket configurado no Supabase (migration 10).
+            </p>
+          </div>
+
           <Input
             id="fin-notes"
             label="Notas internas"

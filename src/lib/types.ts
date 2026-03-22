@@ -162,6 +162,8 @@ export interface FinanceEntry {
   supplier_id: string | null;
   notes: string | null;
   reference_code: string | null;
+  /** PDF ou XML da NF-e / nota fiscal (Storage público) */
+  invoice_file_url: string | null;
   /** Populado em joins opcionais */
   supplier?: Pick<Supplier, "id" | "name"> | null;
 }
