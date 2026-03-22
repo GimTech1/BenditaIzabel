@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, FileText, Edit3, Trash2, Loader2,
   CheckCircle, AlertTriangle, AlertCircle, XCircle, Calendar,
+  Upload, Link2, ExternalLink,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -17,8 +18,12 @@ import { Select } from '@/components/ui/select'
 import { Card } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/layout/page-header'
+import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import type { Document } from '@/lib/types'
+
+const DOCS_BUCKET = 'bendita-documents'
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 const CATEGORIES = [
   'Alvará', 'Vigilância Sanitária', 'Bombeiros', 'CNPJ/Fiscal',
@@ -46,8 +51,13 @@ const STATUS_CONFIG: Record<string, {
 }
 
 async function api<T>(url: string, opts?: RequestInit): Promise<T> {
+  const hasBody = opts?.body != null
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    headers: {
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+      ...opts?.headers,
+    },
     ...opts,
   })
   if (!res.ok) {
@@ -70,6 +80,9 @@ export default function DocumentosPage() {
   const [formExpiry, setFormExpiry] = useState('')
   const [formNotes, setFormNotes] = useState('')
   const [formFileUrl, setFormFileUrl] = useState('')
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const fetchDocs = useCallback(async () => {
     setLoading(true)
@@ -100,6 +113,7 @@ export default function DocumentosPage() {
     setFormExpiry('')
     setFormNotes('')
     setFormFileUrl('')
+    setPendingFile(null)
     setShowModal(true)
   }
 
@@ -111,7 +125,12 @@ export default function DocumentosPage() {
     setFormExpiry(doc.expiry_date ?? '')
     setFormNotes(doc.notes ?? '')
     setFormFileUrl(doc.file_url ?? '')
+    setPendingFile(null)
     setShowModal(true)
+  }
+
+  function sanitizeFileName(name: string) {
+    return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 180) || 'documento'
   }
 
   async function handleSave() {
@@ -120,14 +139,49 @@ export default function DocumentosPage() {
       return
     }
     setSaving(true)
+    setUploading(!!pendingFile)
     try {
+      let finalFileUrl = formFileUrl.trim() || null
+
+      if (pendingFile) {
+        if (pendingFile.size > MAX_UPLOAD_BYTES) {
+          toast.error('Arquivo muito grande (máx. 50 MB)')
+          setSaving(false)
+          setUploading(false)
+          return
+        }
+        const supabase = createClient()
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        if (!user) {
+          toast.error('Sessão expirada. Faça login de novo.')
+          setSaving(false)
+          setUploading(false)
+          return
+        }
+        const safeName = sanitizeFileName(pendingFile.name)
+        const path = `docs/${user.id}/${Date.now()}_${safeName}`
+        const { error: upErr } = await supabase.storage
+          .from(DOCS_BUCKET)
+          .upload(path, pendingFile, { cacheControl: '3600', upsert: false })
+        if (upErr) {
+          toast.error(upErr.message || 'Erro ao enviar arquivo')
+          setSaving(false)
+          setUploading(false)
+          return
+        }
+        const { data: pub } = supabase.storage.from(DOCS_BUCKET).getPublicUrl(path)
+        finalFileUrl = pub.publicUrl
+      }
+
       const payload = {
         title: formTitle.trim(),
         category: formCategory,
         status: formStatus,
         expiry_date: formExpiry || null,
         notes: formNotes.trim() || null,
-        file_url: formFileUrl.trim() || null,
+        file_url: finalFileUrl,
       }
       if (editing) {
         await api(`/api/documentos/${editing.id}`, {
@@ -143,11 +197,13 @@ export default function DocumentosPage() {
         toast.success('Documento criado')
       }
       setShowModal(false)
+      setPendingFile(null)
       fetchDocs()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Erro ao salvar')
     } finally {
       setSaving(false)
+      setUploading(false)
     }
   }
 
@@ -229,6 +285,16 @@ export default function DocumentosPage() {
                 {doc.notes && (
                   <p className="text-xs text-text-muted line-clamp-2">{doc.notes}</p>
                 )}
+                {doc.file_url && (
+                  <a
+                    href={doc.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-gold-400 hover:text-gold-300"
+                  >
+                    <ExternalLink size={12} /> Abrir arquivo / link
+                  </a>
+                )}
                 <div className="flex justify-end gap-1 mt-auto pt-1 border-t border-border">
                   <Button variant="ghost" size="icon" onClick={() => openEdit(doc)}>
                     <Edit3 size={15} />
@@ -284,19 +350,91 @@ export default function DocumentosPage() {
             onChange={e => setFormNotes(e.target.value)}
             placeholder="Notas sobre o documento"
           />
-          <Input
-            id="doc-file-url"
-            label="URL do Arquivo"
-            value={formFileUrl}
-            onChange={e => setFormFileUrl(e.target.value)}
-            placeholder="https://..."
-          />
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-text-secondary">Arquivo (upload)</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp,.txt,application/pdf,image/*"
+              onChange={e => {
+                const f = e.target.files?.[0]
+                setPendingFile(f ?? null)
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload size={14} className="mr-1.5" />
+                {pendingFile ? 'Trocar arquivo' : 'Importar arquivo'}
+              </Button>
+              {pendingFile && (
+                <span className="text-xs text-text-muted truncate max-w-[200px]" title={pendingFile.name}>
+                  {pendingFile.name}
+                </span>
+              )}
+              {pendingFile && (
+                <button
+                  type="button"
+                  className="text-xs text-red-400 hover:underline"
+                  onClick={() => {
+                    setPendingFile(null)
+                    if (fileInputRef.current) fileInputRef.current.value = ''
+                  }}
+                >
+                  Remover seleção
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-text-muted">PDF, Word, Excel, imagens ou texto — até 50 MB. O upload substitui o link abaixo se ambos forem usados.</p>
+          </div>
+
+          <div className="relative">
+            <Input
+              id="doc-file-url"
+              label={
+                <span className="inline-flex items-center gap-1.5">
+                  <Link2 size={14} className="text-text-muted shrink-0" aria-hidden />
+                  Ou link externo (opcional)
+                </span>
+              }
+              value={formFileUrl}
+              onChange={e => setFormFileUrl(e.target.value)}
+              placeholder="https://..."
+              disabled={!!pendingFile}
+            />
+            {pendingFile && (
+              <p className="text-[11px] text-text-muted mt-1">Desmarque o arquivo para informar só o link.</p>
+            )}
+          </div>
+
+          {editing && formFileUrl && !pendingFile && (
+            <a
+              href={formFileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-gold-400 hover:text-gold-300"
+            >
+              <ExternalLink size={12} /> Ver arquivo / link atual
+            </a>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" size="sm" onClick={() => setShowModal(false)}>
               Cancelar
             </Button>
-            <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
-              {editing ? 'Salvar' : 'Criar'}
+            <Button
+              variant="primary"
+              size="sm"
+              loading={saving}
+              onClick={handleSave}
+            >
+              {uploading ? 'Enviando…' : editing ? 'Salvar' : 'Criar'}
             </Button>
           </div>
         </div>

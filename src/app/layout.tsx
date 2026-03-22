@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import { Toaster } from "react-hot-toast";
+import Script from "next/script";
 import "./globals.css";
+import { ThemeProvider } from "@/components/theme/ThemeProvider";
+import { AppToaster } from "@/components/theme/AppToaster";
 
 export const metadata: Metadata = {
   title: "Bendita - Sistema de Gestão",
@@ -16,8 +18,10 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const themeInit = `(function(){try{var t=localStorage.getItem('bendita-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);else document.documentElement.setAttribute('data-theme','dark');}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;
+
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" suppressHydrationWarning>
       <head>
         <link
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
@@ -25,17 +29,15 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased">
-        {children}
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            style: {
-              background: "#0c1512",
-              color: "#f2faf6",
-              border: "1px solid #1f3d32",
-            },
-          }}
+        <Script
+          id="bendita-theme-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: themeInit }}
         />
+        <ThemeProvider>
+          {children}
+          <AppToaster />
+        </ThemeProvider>
       </body>
     </html>
   );

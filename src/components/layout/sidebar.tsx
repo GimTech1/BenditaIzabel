@@ -16,6 +16,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand/BrandMark";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -88,7 +89,8 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-border px-3 py-4">
+      <div className="border-t border-border px-3 py-4 space-y-1">
+        <ThemeToggle />
         <button
           onClick={handleLogout}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-text-secondary hover:bg-surface-3 hover:text-red-400 transition-colors"

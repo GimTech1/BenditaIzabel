@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, type DragEvent } from 'react'
+import { useState, useEffect, useCallback, useRef, memo, useMemo, type DragEvent } from 'react'
 import {
   Plus, Columns3, MoreHorizontal, Trash2, Edit3, Calendar, Tag,
   CheckSquare, MessageSquare, Paperclip, Users, ChevronDown, X,
@@ -35,6 +35,17 @@ interface CardDetail extends TrelloCard {
   comments: (TrelloCardComment & { profile?: Pick<Profile, 'full_name' | 'avatar_url'> })[]
   attachments: TrelloCardAttachment[]
   assignees: (TrelloCardAssignee & { profile?: Pick<Profile, 'full_name' | 'avatar_url'> })[]
+}
+
+function buildPlaceholderDetail(card: TrelloCard): CardDetail {
+  return {
+    ...card,
+    checklists: [],
+    labels: [],
+    comments: [],
+    attachments: [],
+    assignees: [],
+  }
 }
 
 interface TrelloUser {
@@ -124,25 +135,13 @@ export default function TrelloPage() {
 
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null)
   const [dragOverListId, setDragOverListId] = useState<string | null>(null)
+  const [cardDetailLoading, setCardDetailLoading] = useState(false)
 
   const boardSelectRef = useRef<HTMLDivElement>(null)
-  const supabase = createClient()
+  /** Evita setState a cada dragOver (centenas de eventos/segundo). */
+  const dragOverListIdRef = useRef<string | null>(null)
 
-  // ─── Load boards ──────────────────────────────────────────
-
-  const loadBoards = useCallback(async () => {
-    try {
-      const data = await api<TrelloBoard[]>('/api/trello/boards')
-      setBoards(data)
-      if (data.length > 0 && !selectedBoardId) {
-        setSelectedBoardId(data[0].id)
-      }
-    } catch {
-      toast.error('Erro ao carregar quadros')
-    } finally {
-      setLoading(false)
-    }
-  }, [selectedBoardId])
+  // ─── Load boards (só no mount — não recarregar ao trocar de quadro) ──
 
   const loadLists = useCallback(async (boardId: string) => {
     setLoadingLists(true)
@@ -170,7 +169,25 @@ export default function TrelloPage() {
     } catch { /* silent */ }
   }, [])
 
-  useEffect(() => { loadBoards(); loadUsers() }, [loadBoards, loadUsers])
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await api<TrelloBoard[]>('/api/trello/boards')
+        if (cancelled) return
+        setBoards(data)
+        setSelectedBoardId((prev) => prev ?? data[0]?.id ?? null)
+      } catch {
+        toast.error('Erro ao carregar quadros')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    loadUsers()
+    return () => {
+      cancelled = true
+    }
+  }, [loadUsers])
 
   useEffect(() => {
     if (selectedBoardId) {
@@ -266,15 +283,22 @@ export default function TrelloPage() {
     }
   }
 
-  async function openCardDetail(cardId: string) {
+  const openCardDetail = useCallback(async (card: TrelloCard) => {
+    setSelectedCard(buildPlaceholderDetail(card))
+    setCardModalOpen(true)
+    setCardDetailLoading(true)
     try {
-      const detail = await api<CardDetail>(`/api/trello/cards/${cardId}`)
+      const detail = await api<CardDetail>(`/api/trello/cards/${card.id}`)
       setSelectedCard(detail)
-      setCardModalOpen(true)
-    } catch (e: any) {
-      toast.error(e.message)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Erro ao abrir cartão'
+      toast.error(msg)
+      setCardModalOpen(false)
+      setSelectedCard(null)
+    } finally {
+      setCardDetailLoading(false)
     }
-  }
+  }, [])
 
   async function updateCard(cardId: string, data: Partial<TrelloCard>) {
     try {
@@ -313,24 +337,29 @@ export default function TrelloPage() {
 
   // ─── Drag & Drop ──────────────────────────────────────────
 
-  function handleDragStart(e: DragEvent, cardId: string) {
+  const handleDragStart = useCallback((e: DragEvent, cardId: string) => {
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', cardId)
     setDraggedCardId(cardId)
-  }
+  }, [])
 
-  function handleDragOver(e: DragEvent, listId: string) {
+  const handleDragOver = useCallback((e: DragEvent, listId: string) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
-    setDragOverListId(listId)
-  }
+    if (dragOverListIdRef.current !== listId) {
+      dragOverListIdRef.current = listId
+      setDragOverListId(listId)
+    }
+  }, [])
 
-  function handleDragLeave() {
+  const handleDragLeave = useCallback(() => {
+    dragOverListIdRef.current = null
     setDragOverListId(null)
-  }
+  }, [])
 
-  async function handleDrop(e: DragEvent, targetListId: string) {
+  const handleDrop = useCallback(async (e: DragEvent, targetListId: string) => {
     e.preventDefault()
+    dragOverListIdRef.current = null
     setDragOverListId(null)
     const cardId = e.dataTransfer.getData('text/plain')
     if (!cardId) return
@@ -362,7 +391,7 @@ export default function TrelloPage() {
       if (selectedBoardId) loadLists(selectedBoardId)
       toast.error('Erro ao mover cartão')
     }
-  }
+  }, [lists, selectedBoardId, loadLists])
 
   // ─── Render ───────────────────────────────────────────────
 
@@ -476,7 +505,6 @@ export default function TrelloPage() {
               <KanbanList
                 key={list.id}
                 list={list}
-                boardLabels={boardLabels}
                 onOpenCard={openCardDetail}
                 onCreateCard={createCard}
                 onDeleteList={deleteList}
@@ -531,12 +559,13 @@ export default function TrelloPage() {
         <CardDetailModal
           card={selectedCard}
           open={cardModalOpen}
-          onClose={() => { setCardModalOpen(false); setSelectedCard(null) }}
+          detailLoading={cardDetailLoading}
+          onClose={() => { setCardModalOpen(false); setSelectedCard(null); setCardDetailLoading(false) }}
           boardLabels={boardLabels}
           users={users}
           onUpdate={updateCard}
           onDelete={deleteCard}
-          onRefresh={() => selectedCard && openCardDetail(selectedCard.id)}
+          onRefresh={() => selectedCard && openCardDetail(selectedCard)}
           boardId={selectedBoardId!}
           onLabelsChange={() => selectedBoardId && loadLabels(selectedBoardId)}
         />
@@ -549,8 +578,7 @@ export default function TrelloPage() {
 
 interface KanbanListProps {
   list: ListWithCards
-  boardLabels: TrelloLabel[]
-  onOpenCard: (id: string) => void
+  onOpenCard: (card: TrelloCard) => void
   onCreateCard: (listId: string) => void
   onDeleteList: (listId: string) => void
   addingCardToList: string | null
@@ -567,8 +595,8 @@ interface KanbanListProps {
   onDrop: (e: DragEvent, listId: string) => void
 }
 
-function KanbanList({
-  list, boardLabels, onOpenCard, onCreateCard, onDeleteList,
+const KanbanList = memo(function KanbanList({
+  list, onOpenCard, onCreateCard, onDeleteList,
   addingCardToList, setAddingCardToList, newCardTitle, setNewCardTitle,
   listMenuOpen, setListMenuOpen,
   draggedCardId, dragOverListId,
@@ -576,6 +604,11 @@ function KanbanList({
 }: KanbanListProps) {
   const isAdding = addingCardToList === list.id
   const isDragOver = dragOverListId === list.id
+
+  const sortedCards = useMemo(
+    () => [...list.cards].sort((a, b) => a.position - b.position),
+    [list.cards]
+  )
 
   return (
     <div
@@ -615,19 +648,16 @@ function KanbanList({
       </div>
 
       {/* Cards */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[2rem]">
-        {list.cards
-          .sort((a, b) => a.position - b.position)
-          .map(card => (
-            <KanbanCard
-              key={card.id}
-              card={card}
-              boardLabels={boardLabels}
-              onClick={() => onOpenCard(card.id)}
-              onDragStart={onDragStart}
-              isDragging={draggedCardId === card.id}
-            />
-          ))}
+      <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[2rem] touch-pan-y">
+        {sortedCards.map(card => (
+          <KanbanCard
+            key={card.id}
+            card={card}
+            onOpen={() => onOpenCard(card)}
+            onDragStart={onDragStart}
+            isDragging={draggedCardId === card.id}
+          />
+        ))}
       </div>
 
       {/* Add card form */}
@@ -664,30 +694,39 @@ function KanbanList({
       </div>
     </div>
   )
-}
+})
 
 // ─── KanbanCard ────────────────────────────────────────────────
 
 interface KanbanCardProps {
   card: TrelloCard
-  boardLabels: TrelloLabel[]
-  onClick: () => void
+  onOpen: () => void
   onDragStart: (e: DragEvent, cardId: string) => void
   isDragging: boolean
 }
 
-function KanbanCard({ card, onClick, onDragStart, isDragging }: KanbanCardProps) {
+const KanbanCard = memo(function KanbanCard({ card, onOpen, onDragStart, isDragging }: KanbanCardProps) {
   const isOverdue = card.due_date && new Date(card.due_date) < new Date() && !card.is_completed
+  const suppressClickRef = useRef(false)
 
   return (
     <div
       draggable
-      onDragStart={e => onDragStart(e, card.id)}
-      onClick={onClick}
+      onDragStart={(e) => onDragStart(e, card.id)}
+      onDragEnd={() => {
+        suppressClickRef.current = true
+        window.setTimeout(() => {
+          suppressClickRef.current = false
+        }, 150)
+      }}
+      onClick={() => {
+        if (suppressClickRef.current) return
+        onOpen()
+      }}
       className={cn(
-        'rounded-lg border border-border bg-surface-3 p-3 cursor-pointer',
-        'hover:border-border-light transition-all group',
-        isDragging && 'opacity-40',
+        'rounded-lg border border-border bg-surface-3 p-3 cursor-grab active:cursor-grabbing select-none',
+        'hover:border-border-light transition-[opacity,box-shadow] duration-150',
+        isDragging && 'opacity-50 shadow-md',
         card.is_completed && 'opacity-60'
       )}
     >
@@ -748,13 +787,14 @@ function KanbanCard({ card, onClick, onDragStart, isDragging }: KanbanCardProps)
       )}
     </div>
   )
-}
+})
 
 // ─── CardDetailModal ───────────────────────────────────────────
 
 interface CardDetailModalProps {
   card: CardDetail
   open: boolean
+  detailLoading?: boolean
   onClose: () => void
   boardLabels: TrelloLabel[]
   users: TrelloUser[]
@@ -766,7 +806,7 @@ interface CardDetailModalProps {
 }
 
 function CardDetailModal({
-  card, open, onClose, boardLabels, users,
+  card, open, detailLoading, onClose, boardLabels, users,
   onUpdate, onDelete, onRefresh, boardId, onLabelsChange,
 }: CardDetailModalProps) {
   const [editingTitle, setEditingTitle] = useState(false)
@@ -1061,7 +1101,12 @@ function CardDetailModal({
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-y-auto p-5 space-y-5">
+      <div className="relative flex-1 overflow-y-auto p-5 space-y-5">
+        {detailLoading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface-2/70 backdrop-blur-[1px] rounded-b-xl">
+            <Loader2 className="h-8 w-8 animate-spin text-gold-400" aria-label="Carregando" />
+          </div>
+        )}
         {activeTab === 'details' && (
           <>
             {/* Actions row */}
