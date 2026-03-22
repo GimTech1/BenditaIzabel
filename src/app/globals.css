@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  /* Verde Bendita — oficial #018B45 (SVG: bendita_logo_verde, B-Green) */
+  --color-brand-50: #e6f7ef;
+  --color-brand-100: #b3e8d1;
+  --color-brand-200: #80d9b3;
+  --color-brand-300: #4dca95;
+  --color-brand-400: #1fa865;
+  --color-brand-500: #018b45;
+  --color-brand-600: #016f37;
+  --color-brand-700: #01532a;
+  --color-brand-800: #013d1f;
+  --color-brand-900: #012a15;
+
+  /* Amarelo Bendita — oficial #FFC400 (SVG: bendita_logo_amarelo, B-Yellow) */
+  --color-gold-50: #fffbeb;
+  --color-gold-100: #fff3c4;
+  --color-gold-200: #ffe89a;
+  --color-gold-300: #ffdc66;
+  --color-gold-400: #ffc400;
+  --color-gold-500: #e6ac00;
+  --color-gold-600: #bf8f00;
+  --color-gold-700: #997300;
+  --color-gold-800: #735600;
+  --color-gold-900: #4d3a00;
+
+  /* Superfícies — base escura alinhada ao verde da marca */
+  --color-surface: #060d0b;
+  --color-surface-2: #0c1512;
+  --color-surface-3: #121f1a;
+  --color-surface-4: #1a2b24;
+  --color-border: #1f3d32;
+  --color-border-light: #2d5245;
+  --color-text-primary: #f2faf6;
+  --color-text-secondary: #8fb5a3;
+  --color-text-muted: #4d7364;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-light) transparent;
+}
+
+input, textarea, select {
+  color-scheme: dark;
+}
