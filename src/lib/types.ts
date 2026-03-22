@@ -136,6 +136,18 @@ export interface StockItem {
   updated_at: string;
 }
 
+export type FinancePaymentMethod =
+  | "dinheiro"
+  | "pix"
+  | "cartao_credito"
+  | "cartao_debito"
+  | "transferencia"
+  | "boleto"
+  | "nao_informado"
+  | "outros";
+
+export type FinanceEntryStatus = "confirmed" | "pending" | "cancelled";
+
 export interface FinanceEntry {
   id: string;
   date: string;
@@ -145,6 +157,13 @@ export interface FinanceEntry {
   amount: number;
   created_by: string;
   created_at: string;
+  payment_method: FinancePaymentMethod;
+  status: FinanceEntryStatus;
+  supplier_id: string | null;
+  notes: string | null;
+  reference_code: string | null;
+  /** Populado em joins opcionais */
+  supplier?: Pick<Supplier, "id" | "name"> | null;
 }
 
 export interface Document {

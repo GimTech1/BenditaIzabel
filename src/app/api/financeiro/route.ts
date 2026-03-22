@@ -10,7 +10,13 @@ export async function GET(request: NextRequest) {
     if (!user)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const month = request.nextUrl.searchParams.get("month");
+    const sp = request.nextUrl.searchParams;
+    const month = sp.get("month");
+    const type = sp.get("type");
+    const category = sp.get("category");
+    const status = sp.get("status");
+    const payment_method = sp.get("payment_method");
+    const search = sp.get("q")?.trim();
 
     let query = supabase
       .from("finance_entries")
@@ -23,6 +29,41 @@ export async function GET(request: NextRequest) {
       const [year, m] = month.split("-").map(Number);
       const end = new Date(year, m, 1).toISOString().split("T")[0];
       query = query.gte("date", start).lt("date", end);
+    }
+
+    if (type === "income" || type === "expense") {
+      query = query.eq("type", type);
+    }
+
+    if (category) {
+      query = query.eq("category", category);
+    }
+
+    if (status === "confirmed" || status === "pending" || status === "cancelled") {
+      query = query.eq("status", status);
+    }
+
+    if (
+      payment_method &&
+      [
+        "dinheiro",
+        "pix",
+        "cartao_credito",
+        "cartao_debito",
+        "transferencia",
+        "boleto",
+        "nao_informado",
+        "outros",
+      ].includes(payment_method)
+    ) {
+      query = query.eq("payment_method", payment_method);
+    }
+
+    if (search) {
+      const safe = search.replace(/%/g, "").slice(0, 80);
+      if (safe.length > 0) {
+        query = query.ilike("description", `%${safe}%`);
+      }
     }
 
     const { data, error } = await query;
@@ -48,11 +89,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await request.json();
-    const { date, type, category, description, amount } = body;
+    const {
+      date,
+      type,
+      category,
+      description,
+      amount,
+      payment_method,
+      status,
+      supplier_id,
+      notes,
+      reference_code,
+    } = body;
+
+    const row: Record<string, unknown> = {
+      date,
+      type,
+      category,
+      description,
+      amount,
+      created_by: user.id,
+    };
+
+    if (payment_method != null) row.payment_method = payment_method;
+    if (status != null) row.status = status;
+    if (supplier_id !== undefined) row.supplier_id = supplier_id || null;
+    if (notes !== undefined) row.notes = notes || null;
+    if (reference_code !== undefined) row.reference_code = reference_code || null;
 
     const { data, error } = await supabase
       .from("finance_entries")
-      .insert({ date, type, category, description, amount, created_by: user.id })
+      .insert(row)
       .select()
       .single();
 

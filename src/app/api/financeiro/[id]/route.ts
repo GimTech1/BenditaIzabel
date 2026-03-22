@@ -24,7 +24,18 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { date, type, category, description, amount } = body;
+    const {
+      date,
+      type,
+      category,
+      description,
+      amount,
+      payment_method,
+      status,
+      supplier_id,
+      notes,
+      reference_code,
+    } = body;
 
     const update: Record<string, unknown> = {};
     if (date !== undefined) update.date = date;
@@ -32,6 +43,11 @@ export async function PATCH(
     if (category !== undefined) update.category = category;
     if (description !== undefined) update.description = description;
     if (amount !== undefined) update.amount = amount;
+    if (payment_method !== undefined) update.payment_method = payment_method;
+    if (status !== undefined) update.status = status;
+    if (supplier_id !== undefined) update.supplier_id = supplier_id || null;
+    if (notes !== undefined) update.notes = notes || null;
+    if (reference_code !== undefined) update.reference_code = reference_code || null;
 
     const { data, error } = await supabase
       .from("finance_entries")
