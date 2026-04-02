@@ -210,6 +210,16 @@ export interface Contact {
   created_at: string;
 }
 
+// ── Clientes (cadastro via IZA) ──
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  birth_date: string;
+  created_at: string;
+}
+
 // ── Cardápio / pedidos mesa ──
 
 export interface MenuItem {

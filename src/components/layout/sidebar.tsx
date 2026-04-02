@@ -12,6 +12,7 @@ import {
   FileText,
   Contact,
   UtensilsCrossed,
+  UserPlus,
   Menu,
   X,
   LogOut,
@@ -37,6 +38,7 @@ const navigation: NavItem[] = [
   { title: "Financeiro", href: "/financeiro", icon: DollarSign },
   { title: "Documentos", href: "/documentos", icon: FileText },
   { title: "Contatos", href: "/contatos", icon: Contact },
+  { title: "Clientes", href: "/clientes", icon: UserPlus },
 ];
 
 export function Sidebar() {

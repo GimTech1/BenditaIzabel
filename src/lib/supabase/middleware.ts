@@ -7,8 +7,10 @@ const PUBLIC_ROUTES = ["/login", "/register"];
 function isAnonymousAllowed(request: NextRequest) {
   const path = request.nextUrl.pathname;
   if (path === "/mesa" || path.startsWith("/mesa/")) return true;
+  if (path === "/cadastro" || path.startsWith("/cadastro/")) return true;
   if (path === "/api/cardapio/menu/public") return true;
   if (path === "/api/cardapio/orders" && request.method === "POST") return true;
+  if (path === "/api/customers" && request.method === "POST") return true;
   return false;
 }
 
